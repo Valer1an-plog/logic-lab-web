@@ -3,9 +3,6 @@ import pandas as pd
 import json
 import streamlit.components.v1 as components
 
-# ======================================================
-# ✅ Browser LocalStorage 持久化解决方案
-# ======================================================
 LOCALSTORAGE_JS = """
 <script>
 function saveData(key, value) {
@@ -161,7 +158,7 @@ elif st.session_state.step == 3:
     user = st.session_state.current_user
     data = st.session_state.user_data
 
-    st.subheader("🎯 推荐结果展示")
+    st.subheader("🎯 推荐结果展示（Top3相似用户）")
 
     my_items = set(data[user]["浏览"] + data[user]["购买"])
 
@@ -195,3 +192,4 @@ elif st.session_state.step == 3:
     if st.button("🏠 回到首页"):
         st.session_state.step = 1
         st.rerun()
+
