@@ -1,202 +1,146 @@
-import re
-from itertools import product
 import streamlit as st
+import pandas as pd
+from streamlit.runtime.storage import Storage
 
-# ===================== 工具函数 =====================
-def normalize_formula(s):
-    """将用户输入的逻辑符号标准化"""
-    s = s.strip()
-    s = s.replace("<->", "↔").replace("<=>", "↔").replace("->", "→").replace("=>", "→")
-    s = re.sub(r'\band\b', '∧', s, flags=re.I)
-    s = re.sub(r'\bor\b', '∨', s, flags=re.I)
-    s = s.replace('&', '∧').replace('|', '∨').replace('v', '∨')
-    s = s.replace('!', '¬').replace('~', '¬')
-    return re.sub(r'\s+', '', s)
+# 初始化 Storage
+storage = Storage("reco_storage")
 
-def to_py_expr(formula):
-    """将逻辑公式转为 Python 可执行表达式"""
-    return (formula
-            .replace('¬', ' not ')
-            .replace('∧', ' and ')
-            .replace('∨', ' or ')
-            .replace('→', ' <= ')
-            .replace('↔', ' == '))
+# 初始化数据结构（首次运行）
+if storage.get("user_data") is None:
+    storage.set("user_data", {})
+if storage.get("all_products") is None:
+    storage.set("all_products", ["手机", "电脑", "耳机", "手表", "平板", "键盘", "鼠标", "相机", "音箱", "显示器"])
 
-def evaluate_formula(formula):
-    """计算命题公式真值表"""
-    vars_list = sorted(set(re.findall(r'[pqrs]', formula)))
-    if not vars_list:
-        return None, None
-    py_expr = to_py_expr(formula)
-    results = []
-    for combo in product([True, False], repeat=len(vars_list)):
-        env = dict(zip(vars_list, combo))
-        try:
-            val = eval(py_expr, {}, env)
-        except Exception:
-            return None, None
-        results.append((env, val))
-    return vars_list, results
+# Session state 控制流程
+if "step" not in st.session_state:
+    st.session_state.step = 1
+if "current_user" not in st.session_state:
+    st.session_state.current_user = None
 
 
-# ===================== Streamlit 页面 =====================
-st.set_page_config(page_title="离散数学逻辑实验平台", layout="centered")
-st.title("🧮 离散数学逻辑实验平台")
+# ============= STEP 1：登录 注册 =================
+if st.session_state.step == 1:
+    st.title("🧠 个性化推荐系统")
+    st.subheader("Step 1 - 登录或注册")
 
-st.markdown("""
-欢迎使用本系统！请选择要进行的实验题目。  
+    user_data = storage.get("user_data")
+    user_list = list(user_data.keys())
 
-| 符号 | 键盘输入 | 含义 |
-|------|-----------|------|
-| ¬ | `~` 或 `!` | 否定（非） |
-| ∧ | `&` 或 `and` | 合取（且） |
-| ∨ | `|` 或 `or` | 析取（或） |
-| → | `->` 或 `=>` | 蕴含（如果...那么） |
-| ↔ | `<->` 或 `<=>` | 等价（当且仅当） |
-""")
+    op = st.radio("操作：", ["登录已有用户", "注册新用户"])
 
-option = st.sidebar.radio(
-    "📘 选择实验题目：",
-    ["题目1：命题逻辑真值表生成器", 
-     "题目2：命题公式等价性判定",
-     "题目4：基于逻辑的门禁系统"]
-)
-
-# ===================== 题目 1 =====================
-if option == "题目1：命题逻辑真值表生成器":
-    st.header("题目1：命题逻辑真值表生成器")
-    st.markdown("""
-输入命题逻辑公式（含 p、q、r、s 和逻辑符号），程序会自动生成真值表并判断公式类型：  
-- 重言式：所有结果为真  
-- 矛盾式：所有结果为假  
-- 可满足式：部分为真
-""")
-
-    user_input = st.text_input("请输入命题逻辑公式：", placeholder="例如：(p&q)->r 或 p|~p")
-    if st.button("生成真值表"):
-        formula = normalize_formula(user_input)
-        st.write(f"解析后的公式：**{formula}**")
-        vars_list, rows = evaluate_formula(formula)
-        if not vars_list:
-            st.error("⚠️ 输入无效，请检查公式格式。")
+    if op == "登录已有用户":
+        if user_list:
+            sel = st.selectbox("选择用户：", user_list)
+            if st.button("进入系统"):
+                st.session_state.current_user = sel
+                st.session_state.step = 2
+                st.rerun()
         else:
-            table = []
-            for env, val in rows:
-                row = ['T' if env[v] else 'F' for v in vars_list]
-                row.append('T' if val else 'F')
-                table.append(row)
-            st.table([vars_list + [formula]] + table)
+            st.warning("暂无用户，请先注册！")
 
-            vals = [v for _, v in rows]
-            if all(vals):
-                st.success("✅ 该公式是 **重言式**（所有组合为真）")
-            elif not any(vals):
-                st.error("❌ 该公式是 **矛盾式**（所有组合为假）")
+    else:
+        new_name = st.text_input("新用户名：")
+        if st.button("注册"):
+            if not new_name.strip():
+                st.error("不能为空！")
+            elif new_name in user_data:
+                st.warning("用户已存在")
             else:
-                st.info("ℹ️ 该公式是 **可满足式**（但不是重言式）")
+                user_data[new_name] = {"浏览": set(), "购买": set()}
+                storage.set("user_data", user_data)
+                st.session_state.current_user = new_name
+                st.session_state.step = 2
+                st.rerun()
 
 
-# ===================== 题目 2 =====================
-elif option == "题目2：命题公式等价性判定":
-    st.header("题目2：命题公式等价性判定")
-    st.markdown("""
-输入两个命题逻辑公式，系统会自动生成真值表并判定是否等价。
-""")
+# ============= STEP 2：用户行为记录 ================
+elif st.session_state.step == 2:
+    user_data = storage.get("user_data")
+    all_products = storage.get("all_products")
 
-    f1 = st.text_input("第一个公式：", placeholder="如：p->q")
-    f2 = st.text_input("第二个公式：", placeholder="如：~p∨q")
+    u = st.session_state.current_user
+    st.subheader(f"Step 2 - 管理 {u} 的商品行为")
 
-    if st.button("判定等价性"):
-        f1m, f2m = normalize_formula(f1), normalize_formula(f2)
-        all_vars = sorted(set(re.findall(r'[pqrs]', f1m + f2m)))
-        py1, py2 = to_py_expr(f1m), to_py_expr(f2m)
-        diffs, results = [], []
+    behavior = user_data[u]
 
-        for combo in product([True, False], repeat=len(all_vars)):
-            env = dict(zip(all_vars, combo))
-            try:
-                v1, v2 = eval(py1, {}, env), eval(py2, {}, env)
-            except Exception:
-                st.error("⚠️ 输入错误，请检查公式。")
-                st.stop()
-            results.append((env, v1, v2))
-            if v1 != v2:
-                diffs.append(env)
+    # 展示历史记录
+    st.write("📖 浏览：", ", ".join(behavior["浏览"]) or "暂无记录")
+    st.write("🛍 购买：", ", ".join(behavior["购买"]) or "暂无记录")
 
-        header = all_vars + [f1m, f2m]
-        table = []
-        for env, v1, v2 in results:
-            row = ['T' if env[v] else 'F' for v in all_vars] + ['T' if v1 else 'F', 'T' if v2 else 'F']
-            table.append(row)
-        st.table([header] + table)
+    st.write("### 添加记录")
 
-        if not diffs:
-            st.success("✅ 两个公式 **等价**")
-        else:
-            st.error("❌ 两个公式 **不等价**")
-            st.write("差异赋值如下：")
-            for d in diffs:
-                st.write({k: ('真' if v else '假') for k, v in d.items()})
+    new_view = st.multiselect("浏览：", [x for x in all_products if x not in behavior["浏览"]])
+    new_buy = st.multiselect("购买：", [x for x in all_products if x not in behavior["购买"]])
+
+    cv = st.text_input("自定义浏览（逗号隔开）")
+    cb = st.text_input("自定义购买（逗号隔开）")
+
+    if st.button("保存并推荐"):
+        behavior["浏览"].update(new_view)
+        behavior["购买"].update(new_buy)
+
+        if cv.strip():
+            behavior["浏览"].update([x.strip() for x in cv.split(",")])
+        if cb.strip():
+            behavior["购买"].update([x.strip() for x in cb.split(",")])
+
+        # 更新全局商品库
+        all_products = list(set(all_products) | behavior["浏览"] | behavior["购买"])
+
+        user_data[u] = behavior
+        storage.set("user_data", user_data)
+        storage.set("all_products", all_products)
+
+        st.session_state.step = 3
+        st.rerun()
+
+    if st.button("⬅ 返回"):
+        st.session_state.step = 1
+        st.rerun()
 
 
-# ===================== 题目 4 =====================
-elif option == "题目4：基于逻辑的门禁系统":
-    st.header("题目4：基于逻辑的门禁系统")
-    st.markdown("""
-根据输入条件判断是否允许进入实验室，并展示逻辑推理过程。  
-规则如下：  
-1. 若为工作日且在工作时间，学生需出示学生证才能进入；  
-2. 若为工作日但不在工作时间，学生即使有学生证也不能进入；  
-3. 教师任何时间均可进入；  
-4. 访客必须有教师陪同才能进入。
-""")
+# ============= STEP 3：推荐结果展示 ================
+elif st.session_state.step == 3:
+    user_data = storage.get("user_data")
+    u = st.session_state.current_user
+    behavior = user_data[u]
 
-    W = st.selectbox("是否工作日 (W)", ["是", "否"])
-    T = st.selectbox("是否工作时间 (T)", ["是", "否"])
-    identity = st.selectbox("人员类型", ["学生", "教师", "访客"])
-    C = st.selectbox("是否有学生证 (C)", ["是", "否"])
-    A = st.selectbox("是否有教师陪同 (A)", ["是", "否"])
+    st.subheader("Step 3 - 推荐结果")
+    st.write("当前用户：", u)
 
-    if st.button("进行逻辑推理"):
-        Wv, Tv = (W == "是"), (T == "是")
-        Cv, Av = (C == "是"), (A == "是")
-        Sv = (identity == "学生")
-        Ev = (identity == "教师")
-        Vv = (identity == "访客")
+    pref = behavior["浏览"] | behavior["购买"]
 
-        st.write(f"1️⃣ 已知条件：W={Wv}，T={Tv}，S={Sv}，E={Ev}，V={Vv}，C={Cv}，A={Av}")
+    # 相似度计算：Top3
+    def sim(a, b):
+        return len(a & b) / len(a | b) if a | b else 0
 
-        allowed = False
-        reason = ""
-        if Ev:
-            allowed = True
-            reason = "应用规则3：教师任何时间可进入。"
-        elif Sv:
-            if Wv and Tv:
-                if Cv:
-                    allowed = True
-                    reason = "应用规则1：(W∧T∧S)→C，条件满足，允许进入。"
-                else:
-                    allowed = False
-                    reason = "应用规则1：(W∧T∧S)→C，但未出示学生证，禁止进入。"
-            elif Wv and not Tv:
-                allowed = False
-                reason = "应用规则2：W∧¬T∧S→¬允许进入，满足条件。"
-            else:
-                allowed = False
-                reason = "学生仅在工作日工作时间内可申请进入。"
-        elif Vv:
-            if Av:
-                allowed = True
-                reason = "应用规则4：V→(允许↔A)，有教师陪同，允许进入。"
-            else:
-                allowed = False
-                reason = "应用规则4：V→(允许↔A)，无教师陪同，禁止进入。"
-        else:
-            reason = "输入身份无效。"
+    sims = []
+    for other, data in user_data.items():
+        if other == u: continue
+        score = sim(pref, data["浏览"] | data["购买"])
+        if score > 0:
+            sims.append((other, score))
 
-        st.write(f"2️⃣ 推理过程：{reason}")
-        if allowed:
-            st.success("✅ 结论：可以进入实验室。")
-        else:
-            st.error("❌ 结论：不可以进入实验室。")
+    sims = sorted(sims, key=lambda x: x[1], reverse=True)[:3]
+
+    if sims:
+        for other, score in sims:
+            st.info(f"与您相似用户：**{other}**（相似度 {score:.2f}）")
+
+            other_pref = user_data[other]["浏览"] | user_data[other]["购买"]
+            rec = other_pref - pref
+
+            for item in rec:
+                with st.container(border=True):
+                    st.write(f"📌 推荐商品：**{item}**")
+                    st.caption(f"推荐理由：**{other} 也喜欢这个！**")
+    else:
+        st.warning("缺少有效推荐！")
+
+    st.divider()
+    if st.button("继续编辑"):
+        st.session_state.step = 2
+        st.rerun()
+    if st.button("🏠 返回首页"):
+        st.session_state.step = 1
+        st.rerun()
