@@ -1,160 +1,197 @@
 import streamlit as st
+import pandas as pd
 import json
-import os
+import streamlit.components.v1 as components
 
-DATA_FILE = "user_data.json"
+# ======================================================
+# ✅ Browser LocalStorage 持久化解决方案
+# ======================================================
+LOCALSTORAGE_JS = """
+<script>
+function saveData(key, value) {
+    localStorage.setItem(key, JSON.stringify(value));
+}
 
-# ================= 持久化存储 =================
-def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            # JSON 不支持 set，这里转回来
-            for user in data["user_data"]:
-                data["user_data"][user]["浏览"] = set(data["user_data"][user]["浏览"])
-                data["user_data"][user]["购买"] = set(data["user_data"][user]["购买"])
-            return data
-    return {
-        "user_data": {},
-        "all_products": ["手机", "电脑", "耳机", "手表", "平板", "键盘", "鼠标", "相机", "音箱", "显示器"]
-    }
+function loadData(key) {
+    return JSON.parse(localStorage.getItem(key));
+}
 
-def save_data(data):
-    # 存回 JSON（转 list）
-    out = {
-        "user_data": {},
-        "all_products": data["all_products"]
-    }
-    for user, behaviors in data["user_data"].items():
-        out["user_data"][user] = {
-            "浏览": list(behaviors["浏览"]),
-            "购买": list(behaviors["购买"])
-        }
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(out, f, ensure_ascii=False, indent=2)
+function sendDataToStreamlit(key) {
+    const data = loadData(key);
+    const event = new CustomEvent("streamlit:setData", { detail: { key, data }});
+    window.dispatchEvent(event);
+}
+
+window.addEventListener("streamlit:saveData", (event) => {
+    const { key, value } = event.detail;
+    saveData(key, value);
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+    sendDataToStreamlit("user_data");
+});
+</script>
+"""
+
+components.html(LOCALSTORAGE_JS, height=0)
+
+# ======================================================
+# ✅ LocalStorage Handler
+# ======================================================
+def save_to_local(data):
+    components.html(
+        f"""
+        <script>
+        window.dispatchEvent(new CustomEvent("streamlit:saveData", {{
+            detail: {{ key: "user_data", value: {json.dumps(data)} }}
+        }}));
+        </script>
+        """,
+        height=0,
+    )
+
+# 响应数据回填
+if "user_data" not in st.session_state:
+    st.session_state.user_data = {}
+
+def receive_data():
+    event_data = st.session_state.get("data_from_js", None)
+    if event_data:
+        st.session_state.user_data = event_data
 
 
-# ================= Session 初始化 =================
+# ======================================================
+# ✅ 初始化数据
+# ======================================================
+ALL_PRODUCTS = ["手机", "电脑", "耳机", "手表", "平板", "键盘", "鼠标"]
+
 if "step" not in st.session_state:
     st.session_state.step = 1
 if "current_user" not in st.session_state:
     st.session_state.current_user = None
 
-data = load_data()
+receive_data()
 
-# ================= STEP 1：登录 注册 =================
+
+# ======================================================
+# ✅ Step1 用户登录/注册
+# ======================================================
 if st.session_state.step == 1:
     st.title("🧠 个性化推荐系统")
-    user_list = list(data["user_data"].keys())
-    
-    mode = st.radio("请选择操作：", ["登录已有用户", "注册新用户"])
-    
-    if mode == "登录已有用户":
+    user_list = list(st.session_state.user_data.keys())
+
+    option = st.radio("请选择：", ["登录已有用户", "注册新用户"])
+
+    if option == "登录已有用户":
         if user_list:
-            sel = st.selectbox("选择用户：", user_list)
-            if st.button("进入"):
-                st.session_state.current_user = sel
+            name = st.selectbox("选择用户", user_list)
+            if st.button("进入系统"):
+                st.session_state.current_user = name
                 st.session_state.step = 2
                 st.rerun()
         else:
-            st.warning("暂无用户，请先注册！")
+            st.info("暂无用户，请先注册")
 
     else:
-        new_user = st.text_input("请输入用户名：")
-        if st.button("注册"):
-            if not new_user.strip():
+        name = st.text_input("新用户名")
+        if st.button("注册用户"):
+            if name.strip() == "":
                 st.error("用户名不能为空")
-            elif new_user in user_list:
-                st.warning("已存在")
+            elif name in st.session_state.user_data:
+                st.warning("用户已存在")
             else:
-                data["user_data"][new_user] = {"浏览": set(), "购买": set()}
-                save_data(data)
-                st.session_state.current_user = new_user
+                st.session_state.user_data[name] = {"浏览": [], "购买": []}
+                save_to_local(st.session_state.user_data)
+                st.session_state.current_user = name
                 st.session_state.step = 2
                 st.rerun()
 
-
-# ================= STEP 2：添加行为记录 =================
+# ======================================================
+# ✅ Step2 编辑商品行为数据
+# ======================================================
 elif st.session_state.step == 2:
-    u = st.session_state.current_user
-    bev = data["user_data"][u]
-    
-    st.subheader(f"用户：{u}")
-    st.write("📖 浏览：", ", ".join(bev["浏览"]) or "暂无")
-    st.write("🛍 购买：", ", ".join(bev["购买"]) or "暂无")
+    user = st.session_state.current_user
+    data = st.session_state.user_data[user]
 
-    st.divider()
-    
-    prod = data["all_products"]
+    st.subheader(f"{user} 的商品记录")
 
-    new_view = st.multiselect("添加浏览：", [x for x in prod if x not in bev["浏览"]])
-    new_buy  = st.multiselect("添加购买：", [x for x in prod if x not in bev["购买"]])
+    st.write("📖 浏览：", ", ".join(data["浏览"]))
+    st.write("🛍️ 购买：", ", ".join(data["购买"]))
 
-    cv = st.text_input("自定义浏览（逗号隔开）")
-    cb = st.text_input("自定义购买（逗号隔开）")
+    st.write("---")
+    st.write("🔄 添加行为记录")
 
-    if st.button("保存并推荐"):
-        bev["浏览"].update(new_view)
-        bev["购买"].update(new_buy)
+    new_view = st.multiselect("选择浏览商品", [p for p in ALL_PRODUCTS if p not in data["浏览"]])
+    new_buy = st.multiselect("选择购买商品", [p for p in ALL_PRODUCTS if p not in data["购买"]])
 
-        if cv.strip():
-            bev["浏览"].update([x.strip() for x in cv.split(",")])
-        if cb.strip():
-            bev["购买"].update([x.strip() for x in cb.split(",")])
+    custom_v = st.text_input("自定义浏览商品 例：VR眼镜")
+    custom_b = st.text_input("自定义购买商品 例：电动滑板")
 
-        # 更新商品库
-        data["all_products"] = sorted(list(set(prod) | bev["浏览"] | bev["购买"]))
+    if st.button("✅ 保存并推荐"):
+        data["浏览"].extend(new_view)
+        data["购买"].extend(new_buy)
 
-        save_data(data)
+        if custom_v:
+            for item in [x.strip() for x in custom_v.split(",")]:
+                if item and item not in ALL_PRODUCTS:
+                    ALL_PRODUCTS.append(item)
+                if item not in data["浏览"]:
+                    data["浏览"].append(item)
+
+        if custom_b:
+            for item in [x.strip() for x in custom_b.split(",")]:
+                if item and item not in ALL_PRODUCTS:
+                    ALL_PRODUCTS.append(item)
+                if item not in data["购买"]:
+                    data["购买"].append(item)
+
+        save_to_local(st.session_state.user_data)
+
         st.session_state.step = 3
         st.rerun()
 
-    if st.button("⬅ 返回首页"):
+    if st.button("⬅ 回到登录"):
         st.session_state.step = 1
         st.rerun()
 
-
-# ================= STEP 3：推荐展示 =================
+# ======================================================
+# ✅ Step3 推荐结果（Top3）
+# ======================================================
 elif st.session_state.step == 3:
-    u = st.session_state.current_user
-    bev = data["user_data"][u]
-    pref = bev["浏览"] | bev["购买"]
+    user = st.session_state.current_user
+    data = st.session_state.user_data
 
-    st.subheader("🎯 推荐结果")
+    st.subheader("🎯 推荐结果展示")
 
-    def jaccard(a,b):
+    my_items = set(data[user]["浏览"] + data[user]["购买"])
+
+    def jac(a, b):
         return len(a & b) / len(a | b) if a | b else 0
 
-    sim_list = []
-    for other, x in data["user_data"].items():
-        if other == u: continue
-        score = jaccard(pref, x["浏览"]|x["购买"])
-        if score>0:
-            sim_list.append((other, score))
+    sims = []
+    for u in data:
+        if u == user: continue
+        sims.append((u, jac(my_items, set(data[u]["浏览"] + data[u]["购买"]))))
 
-    sim_list = sorted(sim_list, key=lambda x:x[1], reverse=True)[:3]
+    sims = sorted(sims, key=lambda x: x[1], reverse=True)[:3]
 
-    if not sim_list:
-        st.warning("暂无推荐（可能用户太少）")
+    if not sims:
+        st.warning("暂无其他用户")
     else:
-        for other,score in sim_list:
-            st.info(f"相似用户：{other}（{score:.2f}）")
+        for other, s in sims:
+            if s == 0: continue
+            other_items = set(data[other]["浏览"] + data[other]["购买"])
+            recs = list(other_items - my_items)
 
-            other_pref = data["user_data"][other]["浏览"] | data["user_data"][other]["购买"]
-            rec_items = other_pref - pref
+            if recs:
+                st.markdown(f"**🧍 相似用户：{other}（相似度 {s:.2f}）**")
+                for r in recs:
+                    st.success(f"✅ {r} —— 推荐理由：{other}也喜欢")
 
-            for item in rec_items:
-                st.markdown(f"""
-                <div style='padding:10px;border:1.5px solid #ccc;border-radius:10px;margin:6px 0'>
-                    <b>{item}</b><br>
-                    <span style='font-size:13px;color:gray;'>推荐理由：{other} 也喜欢</span>
-                </div>
-                """, unsafe_allow_html=True)
-
-    st.divider()
-    if st.button("继续编辑"):
+    if st.button("继续添加数据"):
         st.session_state.step = 2
         st.rerun()
-    if st.button("🏠 返回首页"):
+
+    if st.button("🏠 回到首页"):
         st.session_state.step = 1
         st.rerun()
